@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+.env
+backend/.env
+
+# Logs
+*.log
+backend.log
+backend_debug.log
+
+# Database
+*.db
+
+# Temporary processing files
+temp_processing/
+temp_extracted.wav
+*_extracted.wav
+ffmpeg.exe
+**/bin/
+**/ffmpeg.exe
+
+# Node
+node_modules/
+dist/
+frontend/node_modules/
+frontend/dist/
+.eslintcache
+
+# OS
+.DS_Store
+Thumbs.db

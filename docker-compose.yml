@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+    volumes:
+      - ./backend/meetlyze.db:/app/meetlyze.db # Persist DB
+      - ./backend:/app # Hot reload for dev (optional)
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5173:80" # Map host 5173 to container 80 (nginx)
+    depends_on:
+      - backend
