@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
+
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 import { Search, Calendar, MessageSquare, TrendingUp, Clock, FileText, ChevronRight, BarChart3, Languages, Trash2, RefreshCw } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -50,7 +52,7 @@ const Dashboard = ({ onViewMeeting }) => {
 
     const fetchMeetings = async () => {
         try {
-            const res = await axios.get('http://localhost:8000/meetings');
+            const res = await axios.get(`${API_BASE_URL}/meetings`);
             setMeetings(res.data);
             calculateStats(res.data);
             setIsLoading(false);
@@ -62,7 +64,7 @@ const Dashboard = ({ onViewMeeting }) => {
 
     const fetchAnalytics = async () => {
         try {
-            const res = await axios.get('http://localhost:8000/analytics');
+            const res = await axios.get(`${API_BASE_URL}/analytics`);
             setAnalytics(res.data);
         } catch (error) {
             console.error("Failed to fetch analytics", error);
@@ -71,7 +73,7 @@ const Dashboard = ({ onViewMeeting }) => {
 
     const searchMeetings = async () => {
         try {
-            const res = await axios.get(`http://localhost:8000/meetings/search?q=${searchQuery}`);
+            const res = await axios.get(`${API_BASE_URL}/meetings/search?q=${searchQuery}`);
             setMeetings(res.data);
         } catch (error) {
             console.error("Failed to search", error);
@@ -82,7 +84,7 @@ const Dashboard = ({ onViewMeeting }) => {
         e.stopPropagation(); // Prevent card click
         if (window.confirm("Are you sure you want to delete this meeting? This action cannot be undone.")) {
             try {
-                await axios.delete(`http://localhost:8000/meetings/${id}`);
+                await axios.delete(`${API_BASE_URL}/meetings/${id}`);
                 setMeetings(prev => prev.filter(m => m.id !== id));
                 // Recalculate stats locally or refetch
                 setStats(prev => ({ ...prev, total: prev.total - 1 }));

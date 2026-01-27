@@ -8,6 +8,8 @@ import { UploadCloud, Link as LinkIcon, AlertCircle, FileAudio, LayoutDashboard,
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+
 function App() {
   const [currentView, setCurrentView] = useState('home'); // 'home', 'dashboard', 'result'
   const [activeTab, setActiveTab] = useState('video'); // 'video' | 'audio' | 'url'
@@ -33,7 +35,7 @@ function App() {
     let pollInterval;
 
     try {
-      const response = await axios.post('http://localhost:8000/analyze/upload', formData, {
+      const response = await axios.post(`${API_BASE_URL}/analyze/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
@@ -53,7 +55,7 @@ function App() {
       // Start polling
       pollInterval = setInterval(async () => {
         try {
-          const progressRes = await axios.get(`http://localhost:8000/progress/${task_id}`);
+          const progressRes = await axios.get(`${API_BASE_URL}/progress/${task_id}`);
           const { status, progress, message, result } = progressRes.data;
 
           setStatusMessage(message || "Processing...");
@@ -96,7 +98,7 @@ function App() {
 
     try {
       // 1. Initiate Task
-      const response = await axios.post('http://localhost:8000/analyze/url', {
+      const response = await axios.post(`${API_BASE_URL}/analyze/url`, {
         url,
         target_language: targetLanguage
       }, {
@@ -108,7 +110,7 @@ function App() {
       // 2. Poll for Progress
       pollInterval = setInterval(async () => {
         try {
-          const progressRes = await axios.get(`http://localhost:8000/progress/${task_id}`);
+          const progressRes = await axios.get(`${API_BASE_URL}/progress/${task_id}`);
           const { status, progress, message, result } = progressRes.data;
 
           setStatusMessage(message || "Processing...");
@@ -144,7 +146,7 @@ function App() {
   const handleViewMeeting = async (id) => {
     try {
       setIsProcessing(true);
-      const res = await axios.get(`http://localhost:8000/meetings/${id}`);
+      const res = await axios.get(`${API_BASE_URL}/meetings/${id}`);
       setResult(res.data);
       setCurrentView('result');
     } catch (e) {
