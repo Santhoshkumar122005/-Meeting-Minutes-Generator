@@ -39,20 +39,20 @@ MeetLyze is an AI-powered meeting minutes generator that transforms video and au
 
 ## Deployment
 
-### Frontend (Vercel)
-Vercel is the recommended way to host the frontend.
-1. **Connect to Vercel**: Import your repository into Vercel.
-2. **Configure Settings**:
-   - **Framework Preset**: Vite
-   - **Root Directory**: `frontend`
-   - **Build Command**: `npm run build`
-   - **Output Directory**: `dist`
-3. **Environment Variables**: Add `VITE_API_URL` pointing to your deployed backend (e.g., `https://your-backend.render.com`).
+### Live Demo
+🚀 **Frontend**: [https://meeting-minutes-generator-ashen.vercel.app/](https://meeting-minutes-generator-ashen.vercel.app/)
 
-### Backend Deployment Recommendation
-The backend requires a Python environment with FFmpeg support.
-1. **Render / Railway**: These are great for hosting FastAPI apps with Docker.
-2. **Environment Variables**: Ensure `GEMINI_API_KEY` is set in the hosting service's dashboard.
+### Frontend (Vercel)
+The frontend is hosted on Vercel for maximum performance.
+1. **Root Directory**: `frontend`
+2. **Framework**: Vite
+3. **Build Settings**: `npm run build` -> `dist`
+4. **Environment Variables**: `VITE_API_URL` should point to your backend.
+
+### Backend (Render/Railway Recommended)
+The backend requires FFmpeg and Python. 
+1. **Docker**: Use the included `backend/Dockerfile`.
+2. **Environment Variables**: Set `GEMINI_API_KEY` in your provider's dashboard.
 
 ## Project Structure
 - `backend/main.py`: Core FastAPI service + AI logic.
