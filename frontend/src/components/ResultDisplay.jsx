@@ -177,9 +177,9 @@ const ResultDisplay = ({ result, transcript, detectedLanguage }) => {
         // Custom Renderer for "Sentiment Summary"
         if (section.title.toLowerCase().includes("sentiment")) {
             return (
-                <div className="bg-gradient-to-br from-pink-500/10 to-rose-500/5 border border-pink-500/20 p-6 rounded-2xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-24 h-24 bg-pink-500/10 rounded-full blur-2xl -mr-12 -mt-12" />
-                    <p className="text-pink-100/90 leading-relaxed italic relative z-10">
+                <div className="bg-gradient-to-br from-zinc-500/10 to-slate-500/5 border border-zinc-500/20 p-6 rounded-2xl relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-24 h-24 bg-zinc-500/10 rounded-full blur-2xl -mr-12 -mt-12" />
+                    <p className="text-zinc-100/90 leading-relaxed italic relative z-10">
                         "{section.content.join(' ')}"
                     </p>
                 </div>

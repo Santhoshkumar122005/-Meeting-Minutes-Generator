@@ -140,7 +140,7 @@ def enrich_with_gemini(transcript_text, detected_language="English", target_lang
              raise Exception("GEMINI_API_KEY not found")
 
         genai.configure(api_key=api_key)
-        # Using gemini-2.0-flash for high reliability and speed
+        # Using gemini-2.0-flash as it is confirmed available in this environment
         model = genai.GenerativeModel('gemini-2.0-flash')
         
         output_lang_instruction = ""
@@ -335,12 +335,20 @@ def analyze_with_gemini(transcript_text, detected_language="English", target_lan
                 last_error = f"{model_name_candidate}: {str(ex)}"
             return None
 
-        # Strategy: Prioritize newest Flash models available in this environment (2.0/2.5)
-        result = generate_resilient('gemini-2.0-flash')
-        if not result:
-            result = generate_resilient('gemini-2.5-flash')
-        if not result:
-            result = generate_resilient('gemini-2.5-pro')
+        # Strategy: Prioritize confirmed available models
+        model_candidates = [
+            'gemini-2.0-flash',
+            'gemini-flash-latest', 
+            'gemini-1.5-flash',
+            'gemini-pro-latest',
+            'gemini-2.5-flash'
+        ]
+        
+        result = None
+        for model_name in model_candidates:
+            result = generate_resilient(model_name)
+            if result:
+                break
         
         # Cleanup
         if gemini_file:
@@ -348,12 +356,9 @@ def analyze_with_gemini(transcript_text, detected_language="English", target_lan
              except: pass
         
         if not result:
-             # List available models to debug if everything fails
-             try:
-                 available_models = [m.name for m in genai.list_models()]
-                 print(f"DEBUG: Available models: {available_models}")
-             except: pass
-             raise Exception(f"All models failed. Last error: {last_error}")
+             if "leaked" in last_error.lower():
+                 raise Exception("CRITICAL: Your Gemini API key has been reported as LEAKED and has been disabled by Google for your security. Please generate a NEW API KEY at https://aistudio.google.com/app/apikey and update your backend/.env file.")
+             raise Exception(f"AI Analysis Failed. All models were unresponsive or returned errors. Last error: {last_error}")
 
         return result
 

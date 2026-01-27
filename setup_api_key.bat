@@ -6,7 +6,7 @@ echo.
 echo To employ the AI features, you need a Google Gemini API Key.
 echo Get one for free here: https://aistudio.google.com/app/apikey
 echo.
-set /p API_KEY="AIzaSyBXlqT1P1jzSg2ZQQPHfn7zeuPOPhh3lUU): "
+set /p API_KEY="Paste/Enter your Gemini API Key: "
 
 if "%API_KEY%"=="" (
     echo No key entered. Exiting.
