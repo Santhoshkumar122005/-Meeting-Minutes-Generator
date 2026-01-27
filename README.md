@@ -37,6 +37,19 @@ MeetLyze is an AI-powered meeting minutes generator that transforms video and au
 3. **Access**
    Open `http://localhost:5173` in your browser.
 
+## Deployment
+
+### Frontend (GitHub Pages)
+The frontend is configured to deploy automatically via GitHub Actions whenever changes are pushed to the `main` branch. 
+- **URL**: `https://Santhoshkumar122005.github.io/-Meeting-Minutes-Generator/`
+- **Configuration**: Ensure the GitHub repository has "GitHub Actions" enabled for deployment in Settings -> Pages.
+
+### Backend Deployment Recommendation
+For the backend (FastAPI), you can deploy using:
+1. **Docker**: Use the provided `backend/Dockerfile`.
+2. **Cloud Hosting**: Render, Railway, or AWS/GCP VPS.
+3. **Environment**: Ensure the `GEMINI_API_KEY` and other secrets are set in the production environment.
+
 ## Project Structure
 - `backend/main.py`: Core FastAPI service + AI logic.
 - `frontend/src`: React application.
