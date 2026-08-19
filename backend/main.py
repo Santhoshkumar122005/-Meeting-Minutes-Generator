@@ -23,6 +23,10 @@ import uvicorn
 from dotenv import load_dotenv
 import google.generativeai as genai
 try:
+    from groq import Groq
+except ImportError:
+    Groq = None
+try:
     from transformers import pipeline
 except ImportError:
     pipeline = None
@@ -269,11 +273,149 @@ def enrich_with_gemini(transcript_text, detected_language="English", target_lang
          
     return "\n\n## Status\nAdvanced analysis unavailable. Please check the transcript directly."
 
+def get_ai_credentials():
+    groq_key = os.getenv("GROQ_API_KEY") or os.getenv("GROQ_KEY")
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or os.getenv("GOOGLE_API_KEY")
+    
+    # Auto-detect if user passed a Groq key (starting with gsk_) in any variable
+    for k in [groq_key, gemini_key]:
+        if k and k.strip().startswith("gsk_"):
+            return ("groq", k.strip().strip("'").strip('"'))
+            
+    if groq_key and groq_key.strip():
+        return ("groq", groq_key.strip().strip("'").strip('"'))
+        
+    if gemini_key and gemini_key.strip():
+        return ("gemini", gemini_key.strip().strip("'").strip('"'))
+        
+    raise Exception("No AI API key found. Please set GROQ_API_KEY or GEMINI_API_KEY in Render Dashboard Environment Settings or in backend/.env.")
+
+def transcribe_audio_with_groq(audio_path: Path, api_key: str, target_language: str = "Auto") -> str:
+    if not Groq:
+        raise Exception("groq python package is not installed.")
+    
+    client = Groq(api_key=api_key)
+    abs_path = Path(audio_path).resolve()
+    print(f"[LOG] Groq Whisper STT started for audio file: {abs_path}")
+    
+    models_to_try = ["whisper-large-v3-turbo", "whisper-large-v3"]
+    transcript_text = None
+    last_err = ""
+    
+    for m in models_to_try:
+        try:
+            with open(abs_path, "rb") as file:
+                kwargs = {
+                    "file": (abs_path.name, file.read()),
+                    "model": m,
+                    "response_format": "verbose_json"
+                }
+                if target_language and target_language.lower() != "auto":
+                    kwargs["language"] = target_language.lower()[:2]
+                res = client.audio.transcriptions.create(**kwargs)
+                
+            segments = getattr(res, "segments", [])
+            if segments:
+                timestamped = ""
+                for seg in segments:
+                    start_s = int(seg.get("start", 0)) if isinstance(seg, dict) else int(getattr(seg, "start", 0))
+                    text = seg.get("text", "") if isinstance(seg, dict) else getattr(seg, "text", "")
+                    m_val, s_val = divmod(start_s, 60)
+                    timestamped += f"[{m_val:02d}:{s_val:02d}] {text.strip()}\n"
+                if timestamped.strip():
+                    transcript_text = timestamped.strip()
+                    
+            if not transcript_text:
+                transcript_text = getattr(res, "text", "").strip()
+                
+            if transcript_text and len(transcript_text) > 5:
+                print(f"[LOG] Groq Whisper transcription succeeded with model: {m}")
+                break
+        except Exception as e:
+            print(f"[LOG] Groq model {m} failed: {e}")
+            last_err = str(e)
+            
+    if not transcript_text or len(transcript_text.strip()) < 5:
+        raise Exception(f"Audio transcription failed via Groq. Details: {last_err}")
+        
+    return transcript_text
+
+
+def analyze_with_groq(transcript_text: str, api_key: str, detected_language: str = "English", target_language: str = "Auto") -> str:
+    if not Groq:
+        raise Exception("groq python package is not installed.")
+    
+    client = Groq(api_key=api_key)
+    output_lang = target_language if target_language and target_language != "Auto" else detected_language
+    
+    prompt = f"""You are an expert meeting intelligence AI assistant.
+Analyze the REAL spoken meeting transcript provided below and generate a comprehensive meeting summary report.
+
+ALWAYS generate the following sections EXACTLY as formatted below:
+
+# Meeting Title: [Concise descriptive title based on transcript content]
+
+# Detected Language: [Name of language, e.g. English, Tamil, Hindi, Spanish, etc.]
+
+## Executive Summary
+[Paragraph summarizing key outcomes and decisions]
+
+## Key Topics / Highlights
+* [Topic/Highlight 1]
+* [Topic/Highlight 2]
+* [Topic/Highlight 3]
+... (3–7 bullets)
+
+## Detailed Notes
+[Comprehensive paragraphs detailing discussions, arguments, and context]
+
+## Speaker Timeline
+* [MM:SS] [Speaker Name/ID]: [Key point discussed]
+...
+
+## Sentiment Summary
+[A brief description of overall tone, e.g., "Professional and collaborative", "Urgent and task-focused", "Positive"]
+
+## Raw Transcript
+{transcript_text}
+
+Output language: {output_lang}.
+
+Transcript:
+{transcript_text}
+"""
+
+    models_to_try = ["qwen/qwen3.6-27b", "openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+    last_err = ""
+    result = None
+    
+    for m in models_to_try:
+        try:
+            print(f"[LOG] Groq LLM analysis started with model: {m}")
+            completion = client.chat.completions.create(
+                model=m,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            content = completion.choices[0].message.content
+            if content and len(content.strip()) > 20:
+                content = re.sub(r'<think>.*?</think>', '', content, flags=re.DOTALL).strip()
+                result = content
+                print(f"[LOG] Groq LLM analysis completed successfully with model: {m}")
+                break
+        except Exception as e:
+            print(f"[LOG] Groq LLM model {m} failed: {e}")
+            last_err = str(e)
+            
+    if not result:
+        raise Exception(f"AI Analysis failed via Groq. Details: {last_err}")
+        
+    return result
+
 def get_gemini_api_key() -> str:
-    key = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or os.getenv("GOOGLE_API_KEY")
-    if key and key.strip():
-        return key.strip().strip("'").strip('"')
-    raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings.")
+    provider, key = get_ai_credentials()
+    if provider == "gemini":
+        return key
+    return key
 
 def transcribe_audio_with_gemini(audio_path: Path, target_language: str = "Auto") -> str:
     """
@@ -527,12 +669,16 @@ async def process_video_file(video_path: Path, target_language: str = "Auto", ta
                 if timestamped.strip():
                     transcript_text = timestamped.strip()
             except Exception as whisper_err:
-                print(f"[LOG] Local Whisper transcription failed: {whisper_err}. Falling back to Gemini STT.")
+                print(f"[LOG] Local Whisper transcription failed: {whisper_err}. Falling back to Cloud STT.")
                 transcript_text = ""
 
-        # If local Whisper was not available (e.g. Render 512MB RAM) or failed, use Gemini STT Engine
+        # Cloud STT: Groq or Gemini
+        provider, api_key = get_ai_credentials()
         if not transcript_text:
-            transcript_text = await loop.run_in_executor(None, lambda: transcribe_audio_with_gemini(audio_path, target_language))
+            if provider == "groq":
+                transcript_text = await loop.run_in_executor(None, lambda: transcribe_audio_with_groq(audio_path, api_key, target_language))
+            else:
+                transcript_text = await loop.run_in_executor(None, lambda: transcribe_audio_with_gemini(audio_path, target_language))
 
         # Strict validation: MUST be a real non-empty transcript
         if not transcript_text or len(transcript_text.strip()) < 5 or "[Audio recording provided" in transcript_text:
@@ -544,8 +690,16 @@ async def process_video_file(video_path: Path, target_language: str = "Auto", ta
         if task_id:
              progress_store[task_id] = {"status": "analyzing", "progress": 65, "message": "Generating insights (AI)..."}
 
-        print(f"[LOG] Gemini analysis started for task_id={task_id}")
-        markdown_summary = await loop.run_in_executor(None, lambda: analyze_with_gemini(transcript_text, detected_language, target_language))
+        print(f"[LOG] AI analysis started for task_id={task_id} using {provider.upper()}")
+        if provider == "groq":
+            markdown_summary = await loop.run_in_executor(None, lambda: analyze_with_groq(transcript_text, api_key, detected_language, target_language))
+        else:
+            markdown_summary = await loop.run_in_executor(None, lambda: analyze_with_gemini(transcript_text, detected_language, target_language))
+        
+        if not markdown_summary:
+            raise Exception("AI Analysis Service Unavailable. Please try again later.")
+            
+        print(f"[LOG] AI analysis completed for task_id={task_id}")
         
         if not markdown_summary:
             raise Exception("AI Analysis Service Unavailable. Please try again later.")
