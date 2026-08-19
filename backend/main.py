@@ -273,6 +273,8 @@ def analyze_with_gemini(transcript_text, detected_language="English", target_lan
     last_error = "No models attempted"
     try:
         api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            api_key = api_key.strip().strip("'").strip('"')
         
         # DEBUGGING KEY ISSUE
         if api_key:
@@ -283,9 +285,6 @@ def analyze_with_gemini(transcript_text, detected_language="English", target_lan
 
         if not api_key:
              raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings (for Render) or in backend/.env (for local development).")
-        
-        # Relaxed check - Let Google validate
-        api_key = api_key.strip()
         
         genai.configure(api_key=api_key)
         
