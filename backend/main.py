@@ -269,244 +269,296 @@ def enrich_with_gemini(transcript_text, detected_language="English", target_lang
          
     return "\n\n## Status\nAdvanced analysis unavailable. Please check the transcript directly."
 
-def analyze_with_gemini(transcript_text, detected_language="English", target_language="Auto", audio_path=None):
-    last_error = "No models attempted"
+def transcribe_audio_with_gemini(audio_path: Path, target_language: str = "Auto") -> str:
+    """
+    Transcribes spoken audio word-for-word in its original language using Gemini Multimodal Audio.
+    Memory Footprint: < 50MB RAM (Render Free Tier 512MB compatible).
+    Returns: Real timestamped spoken transcript string.
+    Throws Exception: If audio transcription fails or produces no text.
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings or in backend/.env.")
+    
+    api_key = api_key.strip().strip("'").strip('"')
+    genai.configure(api_key=api_key)
+    
+    abs_audio_path = Path(audio_path).resolve()
+    print(f"[LOG] Transcription started for audio file: {abs_audio_path}")
+    
+    gemini_file = None
     try:
-        api_key = os.getenv("GEMINI_API_KEY")
-        if api_key:
-            api_key = api_key.strip().strip("'").strip('"')
+        gemini_file = genai.upload_file(path=str(abs_audio_path))
+        print(f"[LOG] File uploaded to Gemini AI for STT: {gemini_file.name}")
         
-        # DEBUGGING KEY ISSUE
-        if api_key:
-            masked_key = f"{api_key[:5]}...{api_key[-5:]}" if len(api_key) > 10 else "SHORT_KEY"
-            print(f"DEBUG: Loaded API Key: {masked_key} (Length: {len(api_key)})")
-        else:
-            print("DEBUG: API Key is None")
+        import time
+        start_wait = time.time()
+        max_wait = 180  # 3 minutes timeout
+        while gemini_file.state.name == "PROCESSING":
+            if time.time() - start_wait > max_wait:
+                raise Exception("Audio processing timed out on AI service.")
+            time.sleep(2)
+            gemini_file = genai.get_file(gemini_file.name)
+            
+        if gemini_file.state.name == "FAILED":
+            raise Exception("Audio file processing failed on AI service.")
 
-        if not api_key:
-             raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings (for Render) or in backend/.env (for local development).")
-        
-        genai.configure(api_key=api_key)
-        
-        # Upload Audio for Multimodal Analysis
-        gemini_file = None
-        if audio_path:
-            try:
-                abs_audio_path = Path(audio_path).resolve()
-                print(f"DEBUG: Uploading audio to Gemini: {abs_audio_path}")
-                gemini_file = genai.upload_file(path=str(abs_audio_path))
-                
-                import time
-                while gemini_file.state.name == "PROCESSING":
-                    time.sleep(1)
-                    gemini_file = genai.get_file(gemini_file.name)
-                    
-                if gemini_file.state.name == "FAILED":
-                    print("DEBUG: Gemini audio processing failed. Using text-only.")
-                    gemini_file = None
-            except Exception as e:
-                print(f"DEBUG: Gemini Audio Upload Warning: {e}")
-                gemini_file = None
+        lang_instruction = ""
+        if target_language and target_language.lower() != "auto":
+            lang_instruction = f"If spoken in {target_language}, transcribe directly. If in another language, transcribe spoken words accurately."
 
-        output_lang_instruction = ""
-        if target_language and target_language != "Auto":
-            output_lang_instruction = f"Output language: {target_language} (Translate EVERYTHING)."
-        else:
-            output_lang_instruction = f"Output language: Same as spoken language (Detected: {detected_language})."
+        prompt = f"""You are a professional, high-precision Speech-to-Text (STT) transcriber.
+Task: Listen to the entire attached audio recording carefully and generate the EXACT, VERBATIM spoken transcript of everything said by the speakers.
 
-        base_prompt = f"""
-        You are an expert meeting analysis AI.
-        From the transcript below, ALWAYS generate the following sections EXACTLY as formatted below:
+Instructions:
+1. Transcribe the spoken audio word-for-word in its original spoken language (e.g. Tamil, English, Hindi, Spanish, French, German, Telugu, etc.). {lang_instruction}
+2. Include timestamps at regular intervals or line breaks in format: [MM:SS] Speaker Name or Speaker 1/2: <exact spoken words>
+3. Do NOT summarize, abbreviate, omit, or paraphrase any spoken content.
+4. Do NOT include markdown titles, conversational intros/outros, or disclaimer text. Output ONLY the timestamped verbatim transcript.
+"""
 
-        # Meeting Title: [Enter Title Here]
-        
-        # Detected Language: [Language Name]
-
-        ## Executive Summary
-        [Consise overview]
-
-        ## Key Topics / Highlights
-        * [Bullet 1]
-        * [Bullet 2]
-        * [Bullet 3]
-        ... (3–7 bullets)
-
-        ## Detailed Notes
-        [Paragraphs]
-
-        ## Speaker Timeline
-        * [MM:SS] [Speaker Name/ID]: [Point discussed]
-        ...
-
-        ## Sentiment Summary
-        [A very brief, direct description of the overall tone: e.g., "Professional and collaborative", "Urgent and task-focused", "Highly optimistic". Avoid extra sentences unless necessary.]
-
-        ## Raw Transcript
-        [Transcript excerpt]
-
-        Output language: Same as spoken language unless {output_lang_instruction} says otherwise.
-
-        Transcript:
-        {transcript_text}
-        """
-        
-        def generate_resilient(model_name_candidate):
-            nonlocal last_error
-            try:
-                print(f"DEBUG: Trying Gemini Model: {model_name_candidate}")
-                model = genai.GenerativeModel(model_name_candidate)
-                
-                safety_settings = [
-                    { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
-                    { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
-                    { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
-                    { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
-                ]
-                
-                content_parts = [base_prompt]
-                # Apply multimodal support for 1.5, 2.0, 2.5 series
-                if gemini_file and any(v in model_name_candidate for v in ["1.5", "2.0", "2.5"]):
-                     content_parts.append(gemini_file)
-
-                effective_prompt = base_prompt
-                if "gemini-pro" in model_name_candidate and len(base_prompt) > 30000:
-                        effective_prompt = base_prompt[:2000] + "\n...[Truncated]...\n" + base_prompt[-25000:]
-                        content_parts = [effective_prompt]
-
-                response = model.generate_content(content_parts, safety_settings=safety_settings)
-                if response.text:
-                    return response.text
-            except Exception as ex:
-                print(f"DEBUG: Model {model_name_candidate} failed: {ex}")
-                last_error = f"{model_name_candidate}: {str(ex)}"
-            return None
-
-        # Strategy: Prioritize models with higher free quotas and different buckets
+        user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip().strip("'").strip('"')
         model_candidates = [
-            'gemini-flash-lite-latest',
-            'gemini-1.5-flash-latest',
-            'gemini-pro-latest'
+            user_model,
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-8b",
+            "gemini-flash-lite-latest",
+            "gemini-1.5-pro",
+            "gemini-2.0-flash",
+            "gemini-pro-latest"
         ]
         
-        # Simple token optimization: Trim transcript if it's excessively large for free tier
-        # (Free tier TPM varies, but 10,000 words is a safe starting point)
-        word_limit = 10000
-        words = transcript_text.split()
-        if len(words) > word_limit:
-            print(f"DEBUG: Trimming transcript from {len(words)} to {word_limit} words to save tokens.")
-            transcript_text = " ".join(words[:word_limit]) + "\n...[Remainder of transcript omitted to stay within AI limits]..."
+        unique_candidates = []
+        for m in model_candidates:
+            if m and m not in unique_candidates:
+                unique_candidates.append(m)
 
-        result = None
-        import time
-        for model_name in model_candidates:
-            result = generate_resilient(model_name)
-            if result:
-                break
-            if "429" in last_error or "quota" in last_error.lower():
-                print(f"DEBUG: Rate limit hit for {model_name}, waiting 3 seconds...")
-                time.sleep(3) 
-        
-        # Cleanup
+        transcript_text = None
+        last_error = ""
+
+        for model_name in unique_candidates:
+            try:
+                print(f"[LOG] Attempting STT transcription with model: {model_name}")
+                model = genai.GenerativeModel(model_name)
+                response = model.generate_content([prompt, gemini_file])
+                if response and response.text and len(response.text.strip()) > 5:
+                    transcript_text = response.text.strip()
+                    print(f"[LOG] Transcription completed: transcript_length={len(transcript_text)} characters")
+                    break
+            except Exception as ex:
+                print(f"[LOG] STT model {model_name} failed: {ex}")
+                last_error = str(ex)
+
+        if not transcript_text or len(transcript_text.strip()) < 5:
+            raise Exception(f"Audio transcription failed. Please try again or check the audio file. Details: {last_error}")
+
+        return transcript_text
+
+    finally:
         if gemini_file:
-             try: genai.delete_file(gemini_file.name)
-             except: pass
-        
-        if not result:
-             if "leaked" in last_error.lower():
-                 raise Exception("CRITICAL: Your Gemini API key has been reported as LEAKED and has been disabled by Google for your security. Please generate a NEW API KEY at https://aistudio.google.com/app/apikey and update your backend/.env file.")
-             raise Exception(f"AI Analysis Failed. All models were unresponsive or returned errors. Last error: {last_error}")
-
-        return result
-
-    except Exception as e:
-        print(f"Gemini Analysis Failed: {e}")
-        raise Exception(f"AI Analysis Failed: {str(e)}")
+            try:
+                genai.delete_file(gemini_file.name)
+            except Exception as cleanup_err:
+                print(f"DEBUG: Error cleaning up Gemini file: {cleanup_err}")
 
 
+def analyze_with_gemini(transcript_text: str, detected_language: str = "English", target_language: str = "Auto") -> str:
+    """
+    Generates structured meeting analysis from the REAL transcript_text.
+    Does NOT use fake/placeholder content.
+    """
+    if not transcript_text or not transcript_text.strip() or "[Audio recording provided" in transcript_text:
+        raise Exception("Audio transcription failed. Please try again or check the audio file.")
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings or in backend/.env.")
+    
+    api_key = api_key.strip().strip("'").strip('"')
+    genai.configure(api_key=api_key)
+
+    output_lang_instruction = ""
+    if target_language and target_language != "Auto":
+        output_lang_instruction = f"Output language: {target_language} (Translate EVERYTHING to {target_language})."
+    else:
+        output_lang_instruction = f"Output language: Same as spoken language (Detected: {detected_language})."
+
+    prompt = f"""
+    You are an expert meeting intelligence AI assistant.
+    Analyze the REAL spoken meeting transcript provided below and generate a comprehensive meeting summary report.
+
+    ALWAYS generate the following sections EXACTLY as formatted below:
+
+    # Meeting Title: [Concise descriptive title based on transcript content]
+    
+    # Detected Language: [Name of language, e.g. English, Tamil, Hindi, Spanish, etc.]
+
+    ## Executive Summary
+    [Paragraph summarizing key outcomes and decisions]
+
+    ## Key Topics / Highlights
+    * [Topic/Highlight 1]
+    * [Topic/Highlight 2]
+    * [Topic/Highlight 3]
+    ... (3–7 bullets)
+
+    ## Detailed Notes
+    [Comprehensive paragraphs detailing discussions, arguments, and context]
+
+    ## Speaker Timeline
+    * [MM:SS] [Speaker Name/ID]: [Key point discussed]
+    ...
+
+    ## Sentiment Summary
+    [A brief description of overall tone, e.g., "Professional and collaborative", "Urgent and task-focused", "Positive"]
+
+    ## Raw Transcript
+    {transcript_text}
+
+    {output_lang_instruction}
+
+    Transcript:
+    {transcript_text}
+    """
+
+    user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip().strip("'").strip('"')
+    model_candidates = [
+        user_model,
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b",
+        "gemini-flash-lite-latest",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash",
+        "gemini-pro-latest"
+    ]
+    
+    unique_candidates = []
+    for m in model_candidates:
+        if m and m not in unique_candidates:
+            unique_candidates.append(m)
+
+    word_limit = 10000
+    words = transcript_text.split()
+    if len(words) > word_limit:
+        print(f"[LOG] Trimming transcript from {len(words)} to {word_limit} words to fit token limits.")
+        transcript_text = " ".join(words[:word_limit]) + "\n...[Remainder of transcript omitted]..."
+
+    result = None
+    last_error = "No models attempted"
+    
+    import time
+    for model_name in unique_candidates:
+        try:
+            print(f"[LOG] Gemini analysis started with model: {model_name}")
+            model = genai.GenerativeModel(model_name)
+            safety_settings = [
+                { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
+                { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
+                { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
+                { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
+            ]
+            response = model.generate_content(prompt, safety_settings=safety_settings)
+            if response and response.text:
+                result = response.text
+                print(f"[LOG] Gemini analysis completed successfully with {model_name}")
+                break
+        except Exception as ex:
+            print(f"[LOG] Gemini model {model_name} failed: {ex}")
+            last_error = f"{model_name}: {str(ex)}"
+            if "429" in str(ex) or "quota" in str(ex).lower():
+                time.sleep(2)
+
+    if not result:
+        raise Exception(f"AI Analysis Failed: {last_error}")
+
+    return result
 
 
 async def process_video_file(video_path: Path, target_language: str = "Auto", task_id: str = None):
-    print(f"DEBUG: Processing file: {video_path}")
+    print(f"[LOG] File upload succeeded: path={video_path}, size={video_path.stat().st_size if video_path.exists() else 0} bytes")
     
-    # 0-5% Validating input
     if task_id:
         progress_store[task_id] = {"status": "validating", "progress": 5, "message": "Validating input..."}
 
     if not video_path.exists(): raise Exception(f"Video file not found: {video_path}")
-    if video_path.stat().st_size == 0: raise Exception(f"Video file is empty: {video_path}")
+    if video_path.stat().st_size == 0: raise Exception("Uploaded file is empty.")
         
     audio_path = video_path.with_name(video_path.stem + "_extracted.wav")
     
     try:
-        # 15-30% Extracting audio
+        # 1. Extract audio via FFmpeg
         if task_id:
             progress_store[task_id] = {"status": "extracting", "progress": 20, "message": "Extracting audio..."}
         
         try:
-            print(f"DEBUG: Extracting audio from {video_path} to {audio_path}")
+            print(f"[LOG] Extracting audio from {video_path} to {audio_path}")
             command = [
                 "ffmpeg", "-y", "-i", str(video_path), 
                 "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", str(audio_path)
             ]
             subprocess.run(command, check=True, capture_output=True)
             if not audio_path.exists() or audio_path.stat().st_size == 0:
-                 raise Exception("Extracted audio missing")
+                 raise Exception("Extracted audio missing or zero bytes.")
+            print(f"[LOG] Audio conversion succeeded: path={audio_path}, size={audio_path.stat().st_size} bytes")
         except Exception as e:
             raise Exception(f"Audio extraction failed: {str(e)}")
 
-        # 30-55% Transcribing
+        # 2. Speech-to-Text Transcription
         if task_id:
              progress_store[task_id] = {"status": "transcribing", "progress": 40, "message": "Transcribing audio..."}
 
+        print(f"[LOG] Transcription started for task_id={task_id}")
         transcript_text = ""
         detected_language = "English"
-        try:
-            loop = asyncio.get_event_loop()
-            model = await loop.run_in_executor(None, get_whisper_model)
-            
-            if model is not None:
-                transcribe_kwargs = {}
+        
+        loop = asyncio.get_event_loop()
+        whisper_m = await loop.run_in_executor(None, get_whisper_model)
+        
+        if whisper_m is not None:
+            try:
+                print(f"[LOG] Running local Whisper model for task_id={task_id}")
+                transcribe_kwargs = {"temperature": 0.0}
                 if target_language and target_language.lower() in WHISPER_LANG_MAP:
                     transcribe_kwargs["language"] = WHISPER_LANG_MAP[target_language.lower()]
-                    print(f"DEBUG: Restricting Whisper transcription language to: {transcribe_kwargs['language']} ({target_language})")
                 
-                transcribe_kwargs["temperature"] = 0.0
-
-                result = await loop.run_in_executor(None, lambda: model.transcribe(str(audio_path), **transcribe_kwargs)) 
-                transcript_text = result["text"]
+                result = await loop.run_in_executor(None, lambda: whisper_m.transcribe(str(audio_path), **transcribe_kwargs))
+                transcript_text = result.get("text", "").strip()
                 detected_language = result.get("language", "English")
                 
                 segments = result.get("segments", [])
-                timestamped_transcript = ""
+                timestamped = ""
                 for seg in segments:
                     start_m, start_s = divmod(int(seg['start']), 60)
-                    timestamped_transcript += f"[{start_m:02d}:{start_s:02d}] {seg['text']}\n"
-                
-                if not timestamped_transcript.strip():
-                    timestamped_transcript = transcript_text
-            else:
-                print("DEBUG: Local Whisper not loaded. Using Gemini Multimodal Audio processing.")
-                timestamped_transcript = "[Audio recording provided - processing directly via Gemini Multimodal AI]"
-                transcript_text = timestamped_transcript
-        except Exception as e:
-            print(f"DEBUG: Local transcription skipped ({e}). Falling back to Gemini Multimodal Audio.")
-            timestamped_transcript = "[Audio recording provided - processing directly via Gemini Multimodal AI]"
-            transcript_text = timestamped_transcript
+                    timestamped += f"[{start_m:02d}:{start_s:02d}] {seg['text']}\n"
+                if timestamped.strip():
+                    transcript_text = timestamped.strip()
+            except Exception as whisper_err:
+                print(f"[LOG] Local Whisper transcription failed: {whisper_err}. Falling back to Gemini STT.")
+                transcript_text = ""
 
-        # 55-80% Generating insights
+        # If local Whisper was not available (e.g. Render 512MB RAM) or failed, use Gemini STT Engine
+        if not transcript_text:
+            transcript_text = await loop.run_in_executor(None, lambda: transcribe_audio_with_gemini(audio_path, target_language))
+
+        # Strict validation: MUST be a real non-empty transcript
+        if not transcript_text or len(transcript_text.strip()) < 5 or "[Audio recording provided" in transcript_text:
+            raise Exception("Audio transcription failed. Please try again or check the audio file.")
+
+        print(f"[LOG] Transcription completed: transcript_length={len(transcript_text)} characters")
+
+        # 3. AI Analysis & Meeting Minutes Generation
         if task_id:
              progress_store[task_id] = {"status": "analyzing", "progress": 65, "message": "Generating insights (AI)..."}
 
-        markdown_summary = ""
-        loop = asyncio.get_event_loop()
-        gemini_result = await loop.run_in_executor(None, lambda: analyze_with_gemini(timestamped_transcript, detected_language, target_language, audio_path=audio_path))
+        print(f"[LOG] Gemini analysis started for task_id={task_id}")
+        markdown_summary = await loop.run_in_executor(None, lambda: analyze_with_gemini(transcript_text, detected_language, target_language))
         
-        if gemini_result:
-            markdown_summary = gemini_result
-        else:
+        if not markdown_summary:
             raise Exception("AI Analysis Service Unavailable. Please try again later.")
+            
+        print(f"[LOG] Gemini analysis completed for task_id={task_id}")
 
-        # 80-95% Finalizing
+        # 4. Finalizing
         if task_id:
              progress_store[task_id] = {"status": "finalizing", "progress": 90, "message": "Finalizing report..."}
 

@@ -8,7 +8,7 @@ import { UploadCloud, Link as LinkIcon, AlertCircle, FileAudio, LayoutDashboard,
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:8000" : "https://meeting-minutes-generator-3.onrender.com");
 
 function App() {
   const [currentView, setCurrentView] = useState('home'); // 'home', 'dashboard', 'result'
