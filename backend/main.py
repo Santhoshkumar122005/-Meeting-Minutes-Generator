@@ -269,6 +269,12 @@ def enrich_with_gemini(transcript_text, detected_language="English", target_lang
          
     return "\n\n## Status\nAdvanced analysis unavailable. Please check the transcript directly."
 
+def get_gemini_api_key() -> str:
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_KEY") or os.getenv("GOOGLE_API_KEY")
+    if key and key.strip():
+        return key.strip().strip("'").strip('"')
+    raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings.")
+
 def transcribe_audio_with_gemini(audio_path: Path, target_language: str = "Auto") -> str:
     """
     Transcribes spoken audio word-for-word in its original language using Gemini Multimodal Audio.
@@ -276,11 +282,7 @@ def transcribe_audio_with_gemini(audio_path: Path, target_language: str = "Auto"
     Returns: Real timestamped spoken transcript string.
     Throws Exception: If audio transcription fails or produces no text.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings or in backend/.env.")
-    
-    api_key = api_key.strip().strip("'").strip('"')
+    api_key = get_gemini_api_key()
     genai.configure(api_key=api_key)
     
     abs_audio_path = Path(audio_path).resolve()
@@ -368,11 +370,7 @@ def analyze_with_gemini(transcript_text: str, detected_language: str = "English"
     if not transcript_text or not transcript_text.strip() or "[Audio recording provided" in transcript_text:
         raise Exception("Audio transcription failed. Please try again or check the audio file.")
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings or in backend/.env.")
-    
-    api_key = api_key.strip().strip("'").strip('"')
+    api_key = get_gemini_api_key()
     genai.configure(api_key=api_key)
 
     output_lang_instruction = ""
