@@ -43,9 +43,12 @@ from pydantic import BaseModel
 import database
 
 # Initialize Database
-# Load environment variables explicitly from backend directory
+# Load environment variables (from backend/.env locally or system env on Render)
 env_path = Path(__file__).parent / ".env"
-load_dotenv(dotenv_path=env_path, override=True) # Force reload from file
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
+else:
+    load_dotenv()
 
 try:
     database.init_db()
@@ -279,7 +282,7 @@ def analyze_with_gemini(transcript_text, detected_language="English", target_lan
             print("DEBUG: API Key is None")
 
         if not api_key:
-             raise Exception("GEMINI_API_KEY not found in backend/.env")
+             raise Exception("GEMINI_API_KEY is missing. Please set GEMINI_API_KEY in Render Dashboard Environment Settings (for Render) or in backend/.env (for local development).")
         
         # Relaxed check - Let Google validate
         api_key = api_key.strip()
