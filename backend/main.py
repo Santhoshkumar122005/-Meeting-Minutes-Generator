@@ -317,14 +317,12 @@ Instructions:
 4. Do NOT include markdown titles, conversational intros/outros, or disclaimer text. Output ONLY the timestamped verbatim transcript.
 """
 
-        user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip().strip("'").strip('"')
+        user_model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip().strip("'").strip('"')
         model_candidates = [
             user_model,
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-8b",
             "gemini-flash-lite-latest",
-            "gemini-1.5-pro",
-            "gemini-2.0-flash",
+            "gemini-3.6-flash",
+            "gemini-flash-latest",
             "gemini-pro-latest"
         ]
         
@@ -421,14 +419,12 @@ def analyze_with_gemini(transcript_text: str, detected_language: str = "English"
     {transcript_text}
     """
 
-    user_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip().strip("'").strip('"')
+    user_model = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest").strip().strip("'").strip('"')
     model_candidates = [
         user_model,
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b",
         "gemini-flash-lite-latest",
-        "gemini-1.5-pro",
-        "gemini-2.0-flash",
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
         "gemini-pro-latest"
     ]
     
