@@ -1,6 +1,6 @@
-
 from huggingface_hub import snapshot_download
 import traceback
+import whisper
 
 def download():
     print("Downloading sshleifer/distilbart-cnn-12-6 (PyTorch only)...")
@@ -15,5 +15,14 @@ def download():
         print(f"Download failed: {e}")
         traceback.print_exc()
 
+    print("Downloading Whisper base model...")
+    try:
+        whisper.load_model("base")
+        print("Whisper base model downloaded successfully.")
+    except Exception as e:
+        print(f"Whisper download failed: {e}")
+        traceback.print_exc()
+
 if __name__ == "__main__":
     download()
+

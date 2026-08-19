@@ -6,6 +6,9 @@ sys.stderr.reconfigure(encoding='utf-8')
 
 import os
 import shutil
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 import asyncio
 import uuid
 import re
@@ -19,9 +22,21 @@ from fastapi.responses import JSONResponse
 import uvicorn
 from dotenv import load_dotenv
 import google.generativeai as genai
-from transformers import pipeline
-import whisper
-from moviepy.editor import VideoFileClip
+try:
+    from transformers import pipeline
+except ImportError:
+    pipeline = None
+
+try:
+    import whisper
+except ImportError:
+    whisper = None
+
+try:
+    from moviepy.editor import VideoFileClip
+except ImportError:
+    VideoFileClip = None
+
 import yt_dlp
 import imageio_ffmpeg
 from pydantic import BaseModel
@@ -73,6 +88,17 @@ TEMP_DIR.mkdir(exist_ok=True)
 
 whisper_model = None
 
+WHISPER_LANG_MAP = {
+    "english": "en",
+    "tamil": "ta",
+    "hindi": "hi",
+    "spanish": "es",
+    "french": "fr",
+    "chinese": "zh",
+    "telugu": "te",
+    "german": "de"
+}
+
 class UrlInput(BaseModel):
     url: str
     target_language: str = "Auto"
@@ -107,8 +133,15 @@ def cleanup_file(path: Path):
 def get_whisper_model():
     global whisper_model
     if whisper_model is None:
-        print("Loading Whisper model (base) for better multilingual accuracy...")
-        whisper_model = whisper.load_model("base")
+        try:
+            import whisper
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"Loading Whisper model (base) on {device}...")
+            whisper_model = whisper.load_model("base", device=device)
+        except Exception as e:
+            print(f"DEBUG: Local Whisper unavailable ({e}). Using Gemini Multimodal Audio.")
+            return None
     return whisper_model
 
 # Load Wrapper around Transformers to ensure it only loads once
@@ -117,14 +150,25 @@ summarization_pipeline = None
 def get_summarizer():
     global summarization_pipeline
     if summarization_pipeline is None:
-        # Switch to DistilBART - much faster (~300MB) vs BART Large (~1.6GB)
-        print("Loading fast summarization model (sshleifer/distilbart-cnn-12-6)...")
         try:
-            summarization_pipeline = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6", model_kwargs={"local_files_only": True})
+            summarization_pipeline = pipeline("text-generation", model="sshleifer/distilbart-cnn-12-6")
         except Exception as e:
-            print(f"Local model load failed, trying online: {e}")
-            summarization_pipeline = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+            print(f"DEBUG: Summarization pipeline notice: {e}")
     return summarization_pipeline
+
+# Pre-load models asynchronously on startup
+@app.on_event("startup")
+async def startup_event():
+    import threading
+    def warm_up():
+        print("DEBUG: Starting model warmup background thread...")
+        try:
+            get_whisper_model()
+        except Exception as e:
+            print(f"WARNING: Startup model warmup failed: {e}")
+        print("DEBUG: Model warmup complete!")
+
+    threading.Thread(target=warm_up, daemon=True).start()
 
 
 
@@ -335,20 +379,30 @@ def analyze_with_gemini(transcript_text, detected_language="English", target_lan
                 last_error = f"{model_name_candidate}: {str(ex)}"
             return None
 
-        # Strategy: Prioritize confirmed available models
+        # Strategy: Prioritize models with higher free quotas and different buckets
         model_candidates = [
-            'gemini-2.0-flash',
-            'gemini-flash-latest', 
-            'gemini-1.5-flash',
-            'gemini-pro-latest',
-            'gemini-2.5-flash'
+            'gemini-flash-lite-latest',
+            'gemini-1.5-flash-latest',
+            'gemini-pro-latest'
         ]
         
+        # Simple token optimization: Trim transcript if it's excessively large for free tier
+        # (Free tier TPM varies, but 10,000 words is a safe starting point)
+        word_limit = 10000
+        words = transcript_text.split()
+        if len(words) > word_limit:
+            print(f"DEBUG: Trimming transcript from {len(words)} to {word_limit} words to save tokens.")
+            transcript_text = " ".join(words[:word_limit]) + "\n...[Remainder of transcript omitted to stay within AI limits]..."
+
         result = None
+        import time
         for model_name in model_candidates:
             result = generate_resilient(model_name)
             if result:
                 break
+            if "429" in last_error or "quota" in last_error.lower():
+                print(f"DEBUG: Rate limit hit for {model_name}, waiting 3 seconds...")
+                time.sleep(3) 
         
         # Cleanup
         if gemini_file:
@@ -407,20 +461,35 @@ async def process_video_file(video_path: Path, target_language: str = "Auto", ta
         try:
             loop = asyncio.get_event_loop()
             model = await loop.run_in_executor(None, get_whisper_model)
-            result = await loop.run_in_executor(None, lambda: model.transcribe(str(audio_path))) 
-            transcript_text = result["text"]
-            detected_language = result.get("language", "English")
             
-            segments = result.get("segments", [])
-            timestamped_transcript = ""
-            for seg in segments:
-                start_m, start_s = divmod(int(seg['start']), 60)
-                timestamped_transcript += f"[{start_m:02d}:{start_s:02d}] {seg['text']}\n"
-            
-            if not timestamped_transcript.strip():
-                timestamped_transcript = transcript_text
+            if model is not None:
+                transcribe_kwargs = {}
+                if target_language and target_language.lower() in WHISPER_LANG_MAP:
+                    transcribe_kwargs["language"] = WHISPER_LANG_MAP[target_language.lower()]
+                    print(f"DEBUG: Restricting Whisper transcription language to: {transcribe_kwargs['language']} ({target_language})")
+                
+                transcribe_kwargs["temperature"] = 0.0
+
+                result = await loop.run_in_executor(None, lambda: model.transcribe(str(audio_path), **transcribe_kwargs)) 
+                transcript_text = result["text"]
+                detected_language = result.get("language", "English")
+                
+                segments = result.get("segments", [])
+                timestamped_transcript = ""
+                for seg in segments:
+                    start_m, start_s = divmod(int(seg['start']), 60)
+                    timestamped_transcript += f"[{start_m:02d}:{start_s:02d}] {seg['text']}\n"
+                
+                if not timestamped_transcript.strip():
+                    timestamped_transcript = transcript_text
+            else:
+                print("DEBUG: Local Whisper not loaded. Using Gemini Multimodal Audio processing.")
+                timestamped_transcript = "[Audio recording provided - processing directly via Gemini Multimodal AI]"
+                transcript_text = timestamped_transcript
         except Exception as e:
-            raise Exception(f"Transcription failed: {str(e)}")
+            print(f"DEBUG: Local transcription skipped ({e}). Falling back to Gemini Multimodal Audio.")
+            timestamped_transcript = "[Audio recording provided - processing directly via Gemini Multimodal AI]"
+            transcript_text = timestamped_transcript
 
         # 55-80% Generating insights
         if task_id:
@@ -642,7 +711,7 @@ def analyze_upload(
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     # Validate file type
-    start_time = os.path.getmtime(file.file.fileno()) if hasattr(file.file, 'fileno') else 0
+
     
     allowed_extensions = ('.mp4', '.mov', '.mkv', '.mp3', '.wav', '.m4a', '.aac', '.webm')
     if not file.filename.lower().endswith(allowed_extensions):
@@ -738,10 +807,8 @@ async def process_url_task(task_id: str, url: str, target_language: str):
             'quiet': True,
             'no_warnings': True,
             'nocheckcertificate': True,
-            'ignoreerrors': True,
+            'ignoreerrors': False, # Changed to False to catch real errors
             'logtostderr': False,
-            'quiet': True,
-            'no_warnings': True,
             'default_search': 'auto',
             'source_address': '0.0.0.0', # bind to ipv4 since ipv6 addresses cause issues sometimes
             'socket_timeout': 10,
@@ -753,8 +820,23 @@ async def process_url_task(task_id: str, url: str, target_language: str):
         # Run potentially blocking yt-dlp in a thread to keep event loop responsive
         def download_video():
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return Path(ydl.prepare_filename(info))
+                try:
+                    info = ydl.extract_info(url, download=True)
+                except Exception as e:
+                    raise Exception(f"Failed to download video: {str(e)}")
+                if not info:
+                    raise Exception("Failed to extract video info")
+                
+                expected_path = Path(ydl.prepare_filename(info))
+                if expected_path.exists():
+                    return expected_path
+                
+                # If exact expected path doesn't exist, search by task_id
+                matches = list(TEMP_DIR.glob(f"{task_id}.*"))
+                if matches:
+                    return matches[0]
+                
+                raise Exception("Downloaded file not found on disk")
         
         loop = asyncio.get_event_loop()
         video_path = await loop.run_in_executor(None, download_video)
@@ -799,4 +881,7 @@ async def analyze_url(
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", 8005))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
+
