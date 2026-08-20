@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:8000" : "https://meeting-minutes-generator-3.onrender.com");
+const API_BASE_URL = (import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:8000" : "https://meeting-minutes-generator-3.onrender.com")).replace(/\/+$/, "");
 import { Search, Calendar, MessageSquare, TrendingUp, Clock, FileText, ChevronRight, BarChart3, Languages, Trash2, RefreshCw } from 'lucide-react';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -52,7 +52,7 @@ const Dashboard = ({ onViewMeeting }) => {
 
     const fetchMeetings = async () => {
         try {
-            const res = await axios.get(`${API_BASE_URL}/meetings`);
+            const res = await axios.get(`${API_BASE_URL}/meetings`, { timeout: 10000 });
             setMeetings(res.data);
             calculateStats(res.data);
             setIsLoading(false);
@@ -64,7 +64,7 @@ const Dashboard = ({ onViewMeeting }) => {
 
     const fetchAnalytics = async () => {
         try {
-            const res = await axios.get(`${API_BASE_URL}/analytics`);
+            const res = await axios.get(`${API_BASE_URL}/analytics`, { timeout: 10000 });
             setAnalytics(res.data);
         } catch (error) {
             console.error("Failed to fetch analytics", error);
@@ -73,7 +73,7 @@ const Dashboard = ({ onViewMeeting }) => {
 
     const searchMeetings = async () => {
         try {
-            const res = await axios.get(`${API_BASE_URL}/meetings/search?q=${searchQuery}`);
+            const res = await axios.get(`${API_BASE_URL}/meetings/search?q=${searchQuery}`, { timeout: 10000 });
             setMeetings(res.data);
         } catch (error) {
             console.error("Failed to search", error);
@@ -84,7 +84,7 @@ const Dashboard = ({ onViewMeeting }) => {
         e.stopPropagation(); // Prevent card click
         if (window.confirm("Are you sure you want to delete this meeting? This action cannot be undone.")) {
             try {
-                await axios.delete(`${API_BASE_URL}/meetings/${id}`);
+                await axios.delete(`${API_BASE_URL}/meetings/${id}`, { timeout: 10000 });
                 setMeetings(prev => prev.filter(m => m.id !== id));
                 // Recalculate stats locally or refetch
                 setStats(prev => ({ ...prev, total: prev.total - 1 }));

@@ -46,7 +46,7 @@ const VideoUpload = ({ onUpload, isProcessing, type, uploadProgress, statusMessa
                                 <motion.div
                                     className="h-full bg-gradient-to-r from-zinc-300 to-zinc-600"
                                     initial={{ width: 0 }}
-                                    animate={{ width: `${Math.max(5, uploadProgress)}%` }}
+                                    animate={{ width: `${Math.max(5, uploadProgress || 0)}%` }}
                                     transition={{ duration: 0.5 }}
                                 />
                             </div>
@@ -56,15 +56,15 @@ const VideoUpload = ({ onUpload, isProcessing, type, uploadProgress, statusMessa
                                 animate={{ opacity: 1 }}
                                 className="text-lg text-white font-medium animate-pulse"
                             >
-                                {statusMessage || (uploadProgress < 100 ? "Uploading..." : "Processing...")}
+                                {statusMessage || ((uploadProgress || 0) < 100 ? "Uploading..." : "Processing...")}
                             </motion.p>
 
                             <p className="text-sm text-zinc-400/80 font-mono">
-                                {Math.round(uploadProgress)}% Completed
+                                {Math.round(uploadProgress || 0)}% Completed
                             </p>
                         </div>
 
-                        {uploadProgress === 100 && (
+                        {(uploadProgress || 0) === 100 && (
                             <p className="text-xs text-white/30 mt-4">
                                 This might take 1-2 minutes depending on file size.
                             </p>

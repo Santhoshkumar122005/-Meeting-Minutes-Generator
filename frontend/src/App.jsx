@@ -8,7 +8,7 @@ import { UploadCloud, Link as LinkIcon, AlertCircle, FileAudio, LayoutDashboard,
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:8000" : "https://meeting-minutes-generator-3.onrender.com");
+const API_BASE_URL = (import.meta.env.VITE_API_URL || (import.meta.env.DEV ? "http://localhost:8000" : "https://meeting-minutes-generator-3.onrender.com")).replace(/\/+$/, "");
 
 function App() {
   const [currentView, setCurrentView] = useState('home'); // 'home', 'dashboard', 'result'
@@ -16,11 +16,28 @@ function App() {
   const [result, setResult] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState(null);
+  const [backendWarning, setBackendWarning] = useState(null);
 
   /* New states for progress tracking */
   const [uploadProgress, setUploadProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState("");
   const [targetLanguage, setTargetLanguage] = useState("Auto"); // Default to Auto
+
+  // Check backend health on mount
+  React.useEffect(() => {
+    const checkBackend = async () => {
+      try {
+        await axios.get(`${API_BASE_URL}/meetings`, { timeout: 8000 });
+        setBackendWarning(null);
+      } catch (err) {
+        console.warn("Backend health check failed:", err);
+        setBackendWarning(
+          `Backend service at ${API_BASE_URL} is currently unreachable. If hosted on Render free tier, the first request may take up to 60s to spin up.`
+        );
+      }
+    };
+    checkBackend();
+  }, []);
 
   const handleFileUpload = async (file) => {
     setIsProcessing(true);
@@ -33,18 +50,20 @@ function App() {
     formData.append('file', file);
     formData.append('target_language', targetLanguage);
     let pollInterval;
+    let pollFailures = 0;
 
     try {
       const response = await axios.post(`${API_BASE_URL}/analyze/upload`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 180000, // 3 minutes timeout for file upload
         onUploadProgress: (progressEvent) => {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          const total = progressEvent.total || progressEvent.loaded || 1;
+          const percentCompleted = Math.min(100, Math.max(0, Math.round((progressEvent.loaded * 100) / total)));
 
+          setUploadProgress(percentCompleted);
           if (percentCompleted < 100) {
-            setUploadProgress(percentCompleted);
             setStatusMessage(`Uploading file... ${percentCompleted}%`);
           } else {
-            setUploadProgress(100);
             setStatusMessage("Upload complete. Queuing analysis...");
           }
         }
@@ -55,8 +74,9 @@ function App() {
       // Start polling
       pollInterval = setInterval(async () => {
         try {
-          const progressRes = await axios.get(`${API_BASE_URL}/progress/${task_id}`);
+          const progressRes = await axios.get(`${API_BASE_URL}/progress/${task_id}`, { timeout: 10000 });
           const { status, progress, message, result } = progressRes.data;
+          pollFailures = 0; // reset on success
 
           setStatusMessage(message || "Processing...");
           setUploadProgress(progress || 0);
@@ -75,12 +95,27 @@ function App() {
           }
         } catch (e) {
           console.error("Polling error", e);
+          pollFailures++;
+          if (pollFailures > 15) {
+            clearInterval(pollInterval);
+            setError("Lost connection to backend server during processing.");
+            setIsProcessing(false);
+            setUploadProgress(0);
+          }
         }
-      }, 1000);
+      }, 1500);
 
     } catch (err) {
-      console.error(err);
-      setError(err.response?.data?.detail || "An error occurred during upload.");
+      console.error("Upload error:", err);
+      let errorMsg = "An error occurred during upload.";
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        errorMsg = "Upload request timed out. Please try again or use a smaller file.";
+      } else if (err.response?.data?.detail) {
+        errorMsg = err.response.data.detail;
+      } else if (!err.response) {
+        errorMsg = `Cannot connect to backend service at ${API_BASE_URL}. Ensure backend is running and CORS is configured.`;
+      }
+      setError(errorMsg);
       setIsProcessing(false);
       setUploadProgress(0);
       if (pollInterval) clearInterval(pollInterval);
@@ -95,6 +130,7 @@ function App() {
     setStatusMessage("Initializing...");
 
     let pollInterval;
+    let pollFailures = 0;
 
     try {
       // 1. Initiate Task
@@ -103,6 +139,7 @@ function App() {
         target_language: targetLanguage
       }, {
         headers: { 'Content-Type': 'application/json' },
+        timeout: 60000
       });
 
       const { task_id } = response.data;
@@ -110,8 +147,9 @@ function App() {
       // 2. Poll for Progress
       pollInterval = setInterval(async () => {
         try {
-          const progressRes = await axios.get(`${API_BASE_URL}/progress/${task_id}`);
+          const progressRes = await axios.get(`${API_BASE_URL}/progress/${task_id}`, { timeout: 10000 });
           const { status, progress, message, result } = progressRes.data;
+          pollFailures = 0;
 
           setStatusMessage(message || "Processing...");
           setUploadProgress(progress || 0);
@@ -130,13 +168,27 @@ function App() {
           }
         } catch (e) {
           console.error("Polling error", e);
-          // Don't stop polling on transient network errors, but maybe count them
+          pollFailures++;
+          if (pollFailures > 15) {
+            clearInterval(pollInterval);
+            setError("Lost connection to backend server during processing.");
+            setIsProcessing(false);
+            setUploadProgress(0);
+          }
         }
-      }, 1000);
+      }, 1500);
 
     } catch (err) {
-      console.error(err);
-      setError(err.response?.data?.detail || "An error occurred during processing. Check the URL validity.");
+      console.error("URL submit error:", err);
+      let errorMsg = "An error occurred during processing. Check the URL validity.";
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        errorMsg = "URL processing request timed out.";
+      } else if (err.response?.data?.detail) {
+        errorMsg = err.response.data.detail;
+      } else if (!err.response) {
+        errorMsg = `Cannot connect to backend service at ${API_BASE_URL}. Ensure backend is running.`;
+      }
+      setError(errorMsg);
       setIsProcessing(false);
       setUploadProgress(0);
       if (pollInterval) clearInterval(pollInterval);
@@ -146,7 +198,7 @@ function App() {
   const handleViewMeeting = async (id) => {
     try {
       setIsProcessing(true);
-      const res = await axios.get(`${API_BASE_URL}/meetings/${id}`);
+      const res = await axios.get(`${API_BASE_URL}/meetings/${id}`, { timeout: 15000 });
       setResult(res.data);
       setCurrentView('result');
     } catch (e) {
@@ -365,13 +417,24 @@ function App() {
                 </AnimatePresence>
               </div>
 
+              {backendWarning && !error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="max-w-2xl mx-auto mb-8 p-4 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-200 flex items-center justify-center gap-2 text-sm text-center"
+                >
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                  <span>{backendWarning}</span>
+                </motion.div>
+              )}
+
               {error && (
                 <motion.div
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="max-w-2xl mx-auto mb-8 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-200 flex items-center justify-center gap-2"
+                  className="max-w-2xl mx-auto mb-8 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-200 flex items-center justify-center gap-2 text-sm text-center"
                 >
-                  <AlertCircle className="w-5 h-5" />
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
                   <span>{error}</span>
                 </motion.div>
               )}
